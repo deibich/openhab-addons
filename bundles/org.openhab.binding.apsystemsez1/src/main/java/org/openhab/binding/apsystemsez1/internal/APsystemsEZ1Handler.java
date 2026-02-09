@@ -263,11 +263,26 @@ public class APsystemsEZ1Handler extends BaseThingHandler {
     private <T extends EZ1ResponseData> T parseResponse(Class<T> type, ContentResponse response) {
         var gsonObj = new Gson();
         logger.trace("Raw Response: {}", response.getContentAsString());
-        var returnData = gsonObj.fromJson(response.getContentAsString(), type);
-        if (returnData == null) {
+
+        // 1. Parse into a local variable first
+        T returnData;
+        try {
+            // We try to assign the value.
+            // If this fails, the catch block takes over.
+            var parsed = gsonObj.fromJson(response.getContentAsString(), type);
+            if (parsed == null) {
+                throw new JsonSyntaxException("Parsed JSON is null");
+            }
+            returnData = parsed;
+        } catch (Exception e) {
+            logger.warn("Failed to parse EZ1 response: '{}'. Error: {}", response.getContentAsString(), e.getMessage());
             updateStatus(ThingStatus.OFFLINE, ThingStatusDetail.COMMUNICATION_ERROR, "@text/error.invalid.data");
+            // 2. Return null here because the method signature likely allows it
+            // OR it handles the failure at a higher level.
+            return null;
         }
 
+        // 3. If we reached this point, returnData is guaranteed to be initialized and Non-Null
         return returnData;
     }
 
