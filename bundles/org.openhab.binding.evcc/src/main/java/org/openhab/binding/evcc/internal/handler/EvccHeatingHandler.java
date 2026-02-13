@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2010-2025 Contributors to the openHAB project
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -46,6 +46,7 @@ public class EvccHeatingHandler extends EvccLoadpointHandler {
 
     public EvccHeatingHandler(Thing thing, ChannelTypeRegistry channelTypeRegistry) {
         super(thing, channelTypeRegistry);
+        type = PROPERTY_TYPE_HEATING;
     }
 
     @Override
@@ -73,12 +74,12 @@ public class EvccHeatingHandler extends EvccLoadpointHandler {
     @Override
     public void prepareApiResponseForChannelStateUpdate(JsonObject state) {
         updateJSON(state);
-        updateStatesFromApiResponse(state);
+        super.prepareApiResponseForChannelStateUpdate(state);
     }
 
     protected void updateJSON(JsonObject state) {
         JsonObject heatingState = state.getAsJsonArray(JSON_KEY_LOADPOINTS).get(index).getAsJsonObject();
-        renameJsonKeys(heatingState); // rename the json keys
+        renameJsonKeys(heatingState); // rename the JSON keys
         state.getAsJsonArray(JSON_KEY_LOADPOINTS).set(index, heatingState); // Update the keys in the original JSON
     }
 

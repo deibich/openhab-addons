@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2010-2025 Contributors to the openHAB project
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -19,6 +19,7 @@ import static org.openhab.binding.tapocontrol.internal.helpers.utils.TypeUtils.*
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.openhab.binding.tapocontrol.internal.devices.wifi.TapoBaseDeviceHandler;
 import org.openhab.core.library.types.OnOffType;
+import org.openhab.core.library.unit.Units;
 import org.openhab.core.thing.ChannelUID;
 import org.openhab.core.thing.Thing;
 import org.openhab.core.types.Command;
@@ -82,5 +83,10 @@ public class TapoLightSwitchHandler extends TapoBaseDeviceHandler {
 
     protected void updateChannels(TapoLightSwitchData deviceData) {
         updateState(getChannelID(CHANNEL_GROUP_ACTUATOR, CHANNEL_OUTPUT), getOnOffType(deviceData.isOn()));
+        updateState(getChannelID(CHANNEL_GROUP_DEVICE, CHANNEL_WIFI_STRENGTH),
+                getDecimalType(deviceData.getSignalLevel()));
+        updateState(getChannelID(CHANNEL_GROUP_DEVICE, CHANNEL_ONTIME),
+                getTimeType(deviceData.getOnTime(), Units.SECOND));
+        updateState(getChannelID(CHANNEL_GROUP_DEVICE, CHANNEL_OVERHEAT), getOnOffType(deviceData.isOverheated()));
     }
 }

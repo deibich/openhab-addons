@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2010-2025 Contributors to the openHAB project
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -161,5 +161,13 @@ public class HomekitBridgeHandler extends HomekitBaseAccessoryHandler implements
         notReadyThings.clear();
         // a bridge requires all enabled bridged-accessories to be ready
         notReadyThings.addAll(getThing().getThings().stream().filter(thing -> thing.isEnabled()).toList());
+    }
+
+    public TranslationProvider getTranslationProvider() {
+        return i18nProvider;
+    }
+
+    public Bundle getBundle() {
+        return bundle;
     }
 }
