@@ -12,6 +12,8 @@
  */
 package org.openhab.binding.homekit.internal.handler;
 
+import static org.openhab.binding.homekit.internal.HomekitBindingConstants.*;
+
 import java.util.Collection;
 import java.util.Map;
 import java.util.Set;
@@ -20,10 +22,12 @@ import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
 import org.openhab.binding.homekit.internal.action.HomekitPairingActions;
 import org.openhab.binding.homekit.internal.discovery.HomekitBridgedAccessoryDiscoveryService;
+import org.openhab.binding.homekit.internal.discovery.HomekitMdnsDiscoveryParticipant;
 import org.openhab.binding.homekit.internal.dto.Characteristic;
 import org.openhab.binding.homekit.internal.persistence.HomekitKeyStore;
 import org.openhab.binding.homekit.internal.persistence.HomekitTypeProvider;
 import org.openhab.core.i18n.TranslationProvider;
+import org.openhab.core.io.net.mac.MacResolver;
 import org.openhab.core.thing.Bridge;
 import org.openhab.core.thing.ChannelUID;
 import org.openhab.core.thing.Thing;
@@ -48,8 +52,9 @@ public class HomekitBridgeHandler extends HomekitBaseAccessoryHandler implements
     private @Nullable HomekitBridgedAccessoryDiscoveryService bridgedAccessoryDiscoveryService;
 
     public HomekitBridgeHandler(Bridge bridge, HomekitTypeProvider typeProvider, HomekitKeyStore keyStore,
-            TranslationProvider i18nProvider, Bundle bundle) {
-        super(bridge, typeProvider, keyStore, i18nProvider, bundle);
+            TranslationProvider i18nProvider, Bundle bundle, HomekitMdnsDiscoveryParticipant discoveryParticipant,
+            MacResolver macResolver) {
+        super(bridge, typeProvider, keyStore, i18nProvider, bundle, discoveryParticipant, macResolver);
     }
 
     @Override
@@ -169,5 +174,31 @@ public class HomekitBridgeHandler extends HomekitBaseAccessoryHandler implements
 
     public Bundle getBundle() {
         return bundle;
+    }
+
+    @Override
+    public void initialize() {
+        super.initialize();
+        /*
+         * If the Bridge was the result of a migration from an accessory Thing then mDNS re-discovery must be informed
+         * to map re-discovered Things to be bridges rather than accessories.
+         */
+        if (thing.getProperties().get(PROPERTY_CONVERTED_FROM_ACCESSORY) != null
+                && thing.getConfiguration().getProperties().get(CONFIG_UNIQUE_ID) instanceof String uniqueId) {
+            discoveryParticipant.setTypeMapping(true, uniqueId, thing.getProperties().get(Thing.PROPERTY_MAC_ADDRESS));
+        }
+    }
+
+    @Override
+    public void handleRemoval() {
+        /*
+         * If the Bridge was the result of a migration from an accessory Thing then mDNS re-discovery will have been
+         * informed to map re-discovered Things to be bridges rather than accessories. However since this Bridge is
+         * now being removed, we must make sure that such mapping is also removed.
+         */
+        if (thing.getConfiguration().getProperties().get(CONFIG_UNIQUE_ID) instanceof String uniqueId) {
+            discoveryParticipant.setTypeMapping(false, uniqueId, null);
+        }
+        super.handleRemoval();
     }
 }

@@ -15,6 +15,8 @@ package org.openhab.binding.homekit.internal.handler;
 import static org.openhab.binding.homekit.internal.HomekitBindingConstants.*;
 
 import java.io.IOException;
+import java.io.PrintWriter;
+import java.io.StringWriter;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.security.NoSuchAlgorithmException;
@@ -36,6 +38,7 @@ import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
@@ -44,6 +47,7 @@ import org.bouncycastle.crypto.params.Ed25519PublicKeyParameters;
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
 import org.openhab.binding.homekit.internal.action.HomekitPairingActions;
+import org.openhab.binding.homekit.internal.discovery.HomekitMdnsDiscoveryParticipant;
 import org.openhab.binding.homekit.internal.dto.Accessories;
 import org.openhab.binding.homekit.internal.dto.Accessory;
 import org.openhab.binding.homekit.internal.dto.Characteristic;
@@ -60,6 +64,7 @@ import org.openhab.binding.homekit.internal.session.EventListener;
 import org.openhab.binding.homekit.internal.transport.IpTransport;
 import org.openhab.core.config.core.Configuration;
 import org.openhab.core.i18n.TranslationProvider;
+import org.openhab.core.io.net.mac.MacResolver;
 import org.openhab.core.library.types.RawType;
 import org.openhab.core.thing.Bridge;
 import org.openhab.core.thing.Channel;
@@ -95,6 +100,8 @@ public abstract class HomekitBaseAccessoryHandler extends BaseThingHandler imple
     private final HomekitKeyStore keyStore;
     private final AtomicBoolean sessionUpgradeInProgress = new AtomicBoolean(false);
 
+    protected final HomekitMdnsDiscoveryParticipant discoveryParticipant;
+
     private boolean isConfigured = false;
     private int connectionAttemptDelay = MIN_CONNECTION_ATTEMPT_DELAY_SECONDS;
 
@@ -124,9 +131,12 @@ public abstract class HomekitBaseAccessoryHandler extends BaseThingHandler imple
     protected final HomekitTypeProvider typeProvider;
     protected final TranslationProvider i18nProvider;
     protected final Bundle bundle;
+    private final MacResolver macResolver;
 
     protected boolean isBridgedAccessory = false;
     protected final Throttler throttler = new Throttler();
+
+    private final AtomicReference<@Nullable String> ipPendingMacResolve = new AtomicReference<>();
 
     /**
      * A helper class that runs a {@link Callable} and enforces a minimum delay between calls.
@@ -171,18 +181,23 @@ public abstract class HomekitBaseAccessoryHandler extends BaseThingHandler imple
     }
 
     public HomekitBaseAccessoryHandler(Thing thing, HomekitTypeProvider typeProvider, HomekitKeyStore keyStore,
-            TranslationProvider translationProvider, Bundle bundle) {
+            TranslationProvider translationProvider, Bundle bundle,
+            HomekitMdnsDiscoveryParticipant discoveryParticipant, MacResolver macResolver) {
         super(thing);
         this.typeProvider = typeProvider;
         this.keyStore = keyStore;
         this.i18nProvider = translationProvider;
         this.bundle = bundle;
+        this.discoveryParticipant = discoveryParticipant;
+        this.macResolver = macResolver;
     }
 
     @Override
     public void dispose() {
+        ipPendingMacResolve.set(null);
         notReadyThings.clear();
         eventedCharacteristics.clear();
+        polledCharacteristics.clear();
         accessories.clear();
         cancelRefreshTasks();
         if (!isBridgedAccessory) {
@@ -200,6 +215,16 @@ public abstract class HomekitBaseAccessoryHandler extends BaseThingHandler imple
             transport.close();
         }
         ipTransport = null;
+
+        // see https://github.com/openhab/openhab-addons/issues/19979 => ensure the state is fully reset
+        // on dispose() in case initialize() is subsequently called again on the same handler instance
+        accessoryId = null;
+        rwService = null;
+        isConfigured = false;
+        connectionAttemptDelay = MIN_CONNECTION_ATTEMPT_DELAY_SECONDS;
+        throttler.reset();
+        sessionUpgradeInProgress.set(false);
+
         super.dispose();
     }
 
@@ -482,6 +507,10 @@ public abstract class HomekitBaseAccessoryHandler extends BaseThingHandler imple
         try {
             IpTransport ipTransport = new IpTransport(ipAddress, hostName, this);
             this.ipTransport = ipTransport;
+            if (!isBridgedAccessory) {
+                String ipOnly = ipAddress.split(":")[0];
+                updateMacAddressProperty(ipOnly);
+            }
             return ipTransport;
         } catch (IOException e) {
             updateStatus(ThingStatus.OFFLINE, ThingStatusDetail.COMMUNICATION_ERROR,
@@ -555,7 +584,7 @@ public abstract class HomekitBaseAccessoryHandler extends BaseThingHandler imple
      *
      * @return OK or ERROR with reason
      */
-    private String unpairInner() {
+    protected String unpairInner() {
         if (isBridgedAccessory) {
             logger.warn("{} forbidden to unpair a bridged accessory", thing.getUID());
             return ACTION_RESULT_ERROR_FORMAT.formatted("bridged accessory");
@@ -620,10 +649,14 @@ public abstract class HomekitBaseAccessoryHandler extends BaseThingHandler imple
                 break; // only one accessory information service per accessory
             }
         }
-        // for bridged-accessories add the unique id i.e. representation property
-        if (getBridge() instanceof Bridge bridge && bridge.getHandler() instanceof HomekitBridgeHandler bridgeHandler
-                && bridgeHandler.getThing().getConfiguration().get(CONFIG_UNIQUE_ID) instanceof String bridgeUniqueId) {
-            thingProperties.put(PROPERTY_UNIQUE_ID, STRING_AID_FMT.formatted(bridgeUniqueId, accessoryId));
+        // for bridged-accessories only..
+        if (getBridge() instanceof Bridge bridge && bridge.getHandler() instanceof HomekitBridgeHandler bridgeHandler) {
+            // add the unique id
+            if (bridgeHandler.getThing().getConfiguration().get(CONFIG_UNIQUE_ID) instanceof String bridgeUniqueId) {
+                thingProperties.put(PROPERTY_UNIQUE_ID, STRING_AID_FMT.formatted(bridgeUniqueId, accessoryId));
+            }
+            // remove mac address (if any) to eliminate risk of discovery service representation property confusion
+            thingProperties.remove(Thing.PROPERTY_MAC_ADDRESS);
         }
         thing.setProperties(thingProperties);
     }
@@ -948,11 +981,61 @@ public abstract class HomekitBaseAccessoryHandler extends BaseThingHandler imple
      *            expanded to the i18n text id "error.event-subscribe-error" for the UI
      */
     protected void onCommunicationError(Exception exception, String i18nSuffix) {
-        String message = exception.getMessage();
+        String message = exception.toString();
         logger.debug("{} {} {}, reconnecting..", thing.getUID(), i18nSuffix, message);
-        logger.trace("{} stack trace", thing.getUID(), exception);
+        if (logger.isTraceEnabled()) {
+            try (StringWriter sw = new StringWriter(); PrintWriter pw = new PrintWriter(sw)) {
+                exception.printStackTrace(pw);
+                logger.trace("{} stack trace:\n{}", thing.getUID(), sw.toString().trim());
+            } catch (IOException e) {
+            }
+        }
         String description = THING_STATUS_FMT.formatted("error." + i18nSuffix.replace(' ', '-'), message);
         updateStatus(ThingStatus.OFFLINE, ThingStatusDetail.COMMUNICATION_ERROR, description);
         scheduleConnectionAttempt();
+    }
+
+    /**
+     * Updates the MAC address property of the thing based on the given IP address. This is called when
+     * the thing goes online, and it attempts to resolve the MAC address from the IP address using the
+     * {@link MacResolver} component. It applies the update when the mac resolve future returns.
+     */
+    private void updateMacAddressProperty(String ip) {
+        if (ip.isBlank()) {
+            return;
+        }
+        // avoid duplicate in-flight resolutions
+        String previous = ipPendingMacResolve.getAndSet(ip);
+        if (Objects.equals(previous, ip)) {
+            return; // already resolving this IP
+        }
+        macResolver.resolveMac(ip).whenComplete((mac, ex) -> {
+            if (mac != null) {
+                macAddressResolved(ip, mac);
+            } else {
+                ipPendingMacResolve.compareAndSet(ip, null);
+                logger.trace("{} MAC resolution failed", ip);
+            }
+        });
+    }
+
+    /**
+     * Lambda method called by the MacResolver class CompletableFuture. Called when a MAC address has been resolved for
+     * a given IP address. If the resolved IP address matches the current IP address configuration of the thing, it
+     * updates the thing properties with the resolved MAC address. Otherwise, it ignores the resolved MAC address.
+     *
+     * @param ip the IP address for which the MAC address has been resolved
+     * @param mac the resolved MAC address
+     */
+    private void macAddressResolved(String ip, String mac) {
+        if (!ipPendingMacResolve.compareAndSet(ip, null)) {
+            return; // either no resolution in progress or IP does not match
+        }
+        thing.setProperty(Thing.PROPERTY_MAC_ADDRESS, mac);
+        logger.trace("{} set mac property {}", thing.getUID(), mac);
+        if (thing.getProperties().get(PROPERTY_CONVERTED_FROM_ACCESSORY) != null
+                && thing.getConfiguration().getProperties().get(CONFIG_UNIQUE_ID) instanceof String uniqueId) {
+            discoveryParticipant.setTypeMapping(true, uniqueId, mac);
+        }
     }
 }

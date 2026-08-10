@@ -48,6 +48,14 @@ public class VehicleActions implements ThingActions {
         return handler;
     }
 
+    @RuleAction(label = "@text/action.refresh.label", description = "@text/action.refresh.desc")
+    public void refresh() {
+        final BluelinkVehicleHandler hnd = handler;
+        if (hnd != null) {
+            hnd.refreshVehicleStatus(false);
+        }
+    }
+
     @RuleAction(label = "@text/action.force-refresh.label", description = "@text/action.force-refresh.desc")
     public void forceRefresh() {
         final BluelinkVehicleHandler hnd = handler;
@@ -100,15 +108,40 @@ public class VehicleActions implements ThingActions {
         }
     }
 
+    @RuleAction(label = "@text/action.set-charge-limit-dc.label")
+    @ActionOutput(type = "boolean")
+    public boolean setChargeLimitDC(
+            final @ActionInput(name = "limit", type = "int", required = true, label = "@text/action.set-charge-limit-dc.input.limit.label") int limit) {
+        final BluelinkVehicleHandler hnd = handler;
+        try {
+            return hnd != null && hnd.setChargeLimitDC(limit);
+        } catch (final BluelinkApiException e) {
+            return false;
+        }
+    }
+
+    @RuleAction(label = "@text/action.set-charge-limit-ac.label")
+    @ActionOutput(type = "boolean")
+    public boolean setChargeLimitAC(
+            final @ActionInput(name = "limit", type = "int", required = true, label = "@text/action.set-charge-limit-ac.input.limit.label") int limit) {
+        final BluelinkVehicleHandler hnd = handler;
+        try {
+            return hnd != null && hnd.setChargeLimitAC(limit);
+        } catch (final BluelinkApiException e) {
+            return false;
+        }
+    }
+
     @RuleAction(label = "@text/action.climate-start.label")
     @ActionOutput(type = "boolean")
     public boolean climateStart(
-            final @ActionInput(name = "temperature", type = "QuantityType<Temperature>", label = "@text/action.climate-start.input.temperature.label") QuantityType<Temperature> temperature,
+            final @ActionInput(name = "temperature", type = "QuantityType<Temperature>", required = true, label = "@text/action.climate-start.input.temperature.label") QuantityType<Temperature> temperature,
             final @ActionInput(name = "heating", label = "@text/action.climate-start.input.heating.label", description = "@text/action.climate-start.input.heating.desc") boolean heating,
-            final @ActionInput(name = "defrost", label = "@text/action.climate-start.input.defrost.label") boolean defrost) {
+            final @ActionInput(name = "defrost", label = "@text/action.climate-start.input.defrost.label") boolean defrost,
+            final @ActionInput(name = "igniOnDuration", defaultValue = "5", label = "@text/action.climate-start.input.igniOnDuration.label", description = "@text/action.climate-start.input.igniOnDuration.desc") @Nullable Integer igniOnDuration) {
         final BluelinkVehicleHandler hnd = handler;
         try {
-            return hnd != null && hnd.climateStart(temperature, heating, defrost);
+            return hnd != null && hnd.climateStart(temperature, heating, defrost, igniOnDuration);
         } catch (final BluelinkApiException e) {
             return false;
         }
@@ -125,6 +158,14 @@ public class VehicleActions implements ThingActions {
         }
     }
 
+    public static void refresh(final @Nullable ThingActions actions) {
+        if (actions instanceof VehicleActions va) {
+            va.refresh();
+        } else {
+            throw new IllegalArgumentException("expected VehicleActions");
+        }
+    }
+
     public static void forceRefresh(final @Nullable ThingActions actions) {
         if (actions instanceof VehicleActions va) {
             va.forceRefresh();
@@ -134,9 +175,9 @@ public class VehicleActions implements ThingActions {
     }
 
     public static void climateStart(final @Nullable ThingActions actions, final QuantityType<Temperature> temperature,
-            final boolean heating, final boolean defrost) {
+            final boolean heating, final boolean defrost, final @Nullable Integer igniOnDuration) {
         if (actions instanceof VehicleActions va) {
-            va.climateStart(temperature, heating, defrost);
+            va.climateStart(temperature, heating, defrost, igniOnDuration);
         } else {
             throw new IllegalArgumentException("expected VehicleActions");
         }
@@ -177,6 +218,22 @@ public class VehicleActions implements ThingActions {
     public static void stopCharging(final @Nullable ThingActions actions) {
         if (actions instanceof VehicleActions va) {
             va.stopCharging();
+        } else {
+            throw new IllegalArgumentException("expected VehicleActions");
+        }
+    }
+
+    public static void setChargeLimitDC(final @Nullable ThingActions actions, final int limit) {
+        if (actions instanceof VehicleActions va) {
+            va.setChargeLimitDC(limit);
+        } else {
+            throw new IllegalArgumentException("expected VehicleActions");
+        }
+    }
+
+    public static void setChargeLimitAC(final @Nullable ThingActions actions, final int limit) {
+        if (actions instanceof VehicleActions va) {
+            va.setChargeLimitAC(limit);
         } else {
             throw new IllegalArgumentException("expected VehicleActions");
         }

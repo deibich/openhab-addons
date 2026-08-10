@@ -796,7 +796,6 @@ public class DoorLockConverter extends GenericConverter<DoorLockCluster> {
         ClusterCommand command = DoorLockCluster.setCredential(operationType, credential, pinData, userIndex, null,
                 null);
         // This is a workaround to send null values vs omitting values.
-        // TODO: Refactor command construction to use a builder pattern when matter.js 0.16 comes out.
         command.args.put("userStatus", null);
         command.args.put("userType", null);
         logger.debug("Setting credential at index {}: {}", credentialIndex, command.args);
@@ -986,7 +985,12 @@ public class DoorLockConverter extends GenericConverter<DoorLockCluster> {
      * 
      * @param lockState The lock state from the door lock cluster
      */
-    private void updateLockState(DoorLockCluster.LockStateEnum lockState) {
+    private void updateLockState(DoorLockCluster.@Nullable LockStateEnum lockState) {
+        if (lockState == null) {
+            updateState(CHANNEL_ID_DOORLOCK_STATE, UnDefType.UNDEF);
+            updateState(CHANNEL_ID_DOORLOCK_BOLTSTATE, UnDefType.UNDEF);
+            return;
+        }
         switch (lockState) {
             case LOCKED:
                 // Both the lock and bolt state are locked

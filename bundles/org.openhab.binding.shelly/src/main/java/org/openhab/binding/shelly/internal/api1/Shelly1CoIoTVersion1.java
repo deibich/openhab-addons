@@ -17,6 +17,7 @@ import static org.openhab.binding.shelly.internal.api1.Shelly1ApiJsonDTO.*;
 import static org.openhab.binding.shelly.internal.util.ShellyUtils.*;
 
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
@@ -79,10 +80,10 @@ public class Shelly1CoIoTVersion1 extends Shelly1CoIoTProtocol implements Shelly
         Integer rIndex = Integer.parseInt(sen.links) + 1;
         String rGroup = getProfile().numRelays <= 1 ? CHANNEL_GROUP_RELAY_CONTROL
                 : CHANNEL_GROUP_RELAY_CONTROL + rIndex;
-        switch (sen.type.toLowerCase()) {
+        switch (sen.type.toLowerCase(Locale.ROOT)) {
             case "t": // Temperature +
                 Double value = getDouble(s.value);
-                switch (sen.desc.toLowerCase()) {
+                switch (sen.desc.toLowerCase(Locale.ROOT)) {
                     case "temperature": // Sensor Temp
                         if (getString(getProfile().settings.temperatureUnits)
                                 .equalsIgnoreCase(SHELLY_TEMP_FAHRENHEIT)) {
@@ -114,7 +115,7 @@ public class Shelly1CoIoTVersion1 extends Shelly1CoIoTProtocol implements Shelly
                         }
                         break;
                     default:
-                        logger.debug("{}: Unknown temperatur type: {}", thingName, sen.desc);
+                        logger.debug("{}: Unknown temperature type: {}", thingName, sen.desc);
                 }
                 break;
             case "p": // Power/Watt
@@ -126,19 +127,29 @@ public class Shelly1CoIoTVersion1 extends Shelly1CoIoTProtocol implements Shelly
                 updateChannel(updates, mGroup, CHANNEL_LAST_UPDATE, getTimestamp());
                 break;
             case "s" /* CatchAll */:
-                switch (sen.desc.toLowerCase()) {
+                switch (sen.desc.toLowerCase(Locale.ROOT)) {
                     case "overtemp":
                         if (s.value == 1) {
                             thingHandler.postEvent(ALARM_TYPE_OVERTEMP, true);
                         }
                         break;
                     case "energy counter 0 [w-min]":
+                        // lastPower1 (W, backward compat) has no dual-write mapping — the W state is
+                        // incompatible with the Wh channel — so both channels are written explicitly.
                         updateChannel(updates, rGroup, CHANNEL_METER_LASTMIN1,
                                 toQuantityType(s.value, DIGITS_WATT, Units.WATT));
+                        updateChannel(updates, rGroup, CHANNEL_METER_ENERGYHISTMIN1,
+                                toQuantityType(s.value / 60.0, DIGITS_KWH, Units.WATT_HOUR));
                         break;
                     case "energy counter 1 [w-min]":
+                        updateChannel(updates, rGroup, CHANNEL_METER_ENERGYHISTMIN2,
+                                toQuantityType(s.value / 60.0, DIGITS_KWH, Units.WATT_HOUR));
+                        break;
                     case "energy counter 2 [w-min]":
-                        // we don't use them
+                        // energyAvgLast3Min is not computed here: each counter arrives as an independent
+                        // CoIoT event, so the poll path remains the only source for that average
+                        updateChannel(updates, rGroup, CHANNEL_METER_ENERGYHISTMIN3,
+                                toQuantityType(s.value / 60.0, DIGITS_KWH, Units.WATT_HOUR));
                         break;
                     case "energy counter total [w-h]": // 3EM reports W/h
                     case "energy counter total [w-min]":
@@ -256,7 +267,7 @@ public class Shelly1CoIoTVersion1 extends Shelly1CoIoTProtocol implements Shelly
         if (sen.type == null) {
             sen.type = "";
         }
-        String desc = sen.desc.toLowerCase();
+        String desc = sen.desc.toLowerCase(Locale.ROOT);
 
         // RGBW2 reports Power_0, Power_1, Power_2, Power_3; same for VSwitch and Brightness, all of them linkted to L:0
         // we break it up to Power with L:0, Power with L:1...
@@ -277,7 +288,7 @@ public class Shelly1CoIoTVersion1 extends Shelly1CoIoTProtocol implements Shelly
             }
         }
 
-        switch (sen.type.toLowerCase()) {
+        switch (sen.type.toLowerCase(Locale.ROOT)) {
             case "w": // old devices/firmware releases use "W", new ones "P"
                 sen.type = "P";
                 sen.desc = "Power";
@@ -302,7 +313,7 @@ public class Shelly1CoIoTVersion1 extends Shelly1CoIoTProtocol implements Shelly
                 break;
         }
 
-        switch (sen.desc.toLowerCase()) {
+        switch (sen.desc.toLowerCase(Locale.ROOT)) {
             case "motion": // fix acc to spec it's T=M
                 sen.type = "M";
                 sen.desc = "Motion";
@@ -325,13 +336,13 @@ public class Shelly1CoIoTVersion1 extends Shelly1CoIoTProtocol implements Shelly
             case "e cnt 1 [w-min]":
             case "e cnt 2 [w-min]":
             case "e cnt total [w-min]": // 4 Pro
-                sen.desc = sen.desc.toLowerCase().replace("e cnt", "energy counter");
+                sen.desc = sen.desc.toLowerCase(Locale.ROOT).replace("e cnt", "energy counter");
                 break;
 
         }
 
         if (sen.desc.isEmpty()) {
-            switch (sen.type.toLowerCase()) {
+            switch (sen.type.toLowerCase(Locale.ROOT)) {
                 case "p":
                     sen.desc = "Power";
                     break;
