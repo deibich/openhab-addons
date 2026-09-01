@@ -89,6 +89,7 @@ import org.openhab.binding.amazonechocontrol.internal.dto.response.CustomerHisto
 import org.openhab.binding.amazonechocontrol.internal.dto.response.CustomerHistoryRecordsTO;
 import org.openhab.binding.amazonechocontrol.internal.dto.response.DeviceListTO;
 import org.openhab.binding.amazonechocontrol.internal.dto.response.DeviceNotificationStatesTO;
+import org.openhab.binding.amazonechocontrol.internal.dto.response.DeviceWifiDetailsTO;
 import org.openhab.binding.amazonechocontrol.internal.dto.response.DoNotDisturbDeviceStatusesTO;
 import org.openhab.binding.amazonechocontrol.internal.dto.response.EndpointTO;
 import org.openhab.binding.amazonechocontrol.internal.dto.response.ListItemTO;
@@ -134,6 +135,10 @@ import com.google.gson.JsonObject;
 public class Connection {
     private static final String THING_THREADPOOL_NAME = "thingHandler";
     private static final long EXPIRES_IN = 432000; // five days
+    // Amazon answers /api/notifications with 400 ThrottlingException for the app agent the binding otherwise
+    // sends, and with 200 for a browser agent; a quiet window of hours does not clear the 400.
+    private static final String NOTIFICATIONS_USER_AGENT = "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) "
+            + "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1";
 
     private final Logger logger = LoggerFactory.getLogger(Connection.class);
 
@@ -552,6 +557,22 @@ public class Connection {
                 .toList();
     }
 
+    public @Nullable String getDeviceMacAddress(DeviceTO device) {
+        String serialNumber = device.serialNumber;
+        String deviceType = device.deviceType;
+        if (serialNumber == null || deviceType == null) {
+            return null;
+        }
+
+        try {
+            return requestBuilder.get(getAlexaServer() + "/api/device-wifi-details?deviceSerialNumber=" + serialNumber
+                    + "&deviceType=" + deviceType).syncSend(DeviceWifiDetailsTO.class).macAddress;
+        } catch (ConnectionException e) {
+            logger.debug("Getting Wi-Fi details failed for device {}", serialNumber, e);
+            return null;
+        }
+    }
+
     public Map<String, JsonArray> getSmartHomeDeviceStatesJson(Set<SmartHomeBaseDevice> devices)
             throws ConnectionException {
         JsonObject requestObject = new JsonObject();
@@ -625,19 +646,14 @@ public class Connection {
         return List.of();
     }
 
-    public List<CustomerHistoryRecordTO> getActivities(long startTime, long endTime) {
-        try {
-            String url = getRetailUrl() + "/alexa-privacy/apd/rvh/customer-history-records?startTime=" + startTime
-                    + "&endTime=" + endTime + "&maxRecordSize=1";
-            CustomerHistoryRecordsTO customerHistoryRecords = requestBuilder.get(url)
-                    .syncSend(CustomerHistoryRecordsTO.class);
-            return customerHistoryRecords.customerHistoryRecords.stream()
-                    .filter(r -> !"DEVICE_ARBITRATION".equals(r.utteranceType))
-                    .sorted(Comparator.comparing(r -> r.timestamp)).toList();
-        } catch (ConnectionException e) {
-            logger.info("getting activities failed", e);
-        }
-        return List.of();
+    public List<CustomerHistoryRecordTO> getActivities(long startTime, long endTime) throws ConnectionException {
+        String url = getRetailUrl() + "/alexa-privacy/apd/rvh/customer-history-records?startTime=" + startTime
+                + "&endTime=" + endTime;
+        CustomerHistoryRecordsTO customerHistoryRecords = requestBuilder.get(url)
+                .syncSend(CustomerHistoryRecordsTO.class);
+        return customerHistoryRecords.customerHistoryRecords.stream()
+                .filter(r -> !"DEVICE_ARBITRATION".equals(r.utteranceType))
+                .sorted(Comparator.comparing(r -> r.timestamp)).toList();
     }
 
     public @Nullable NamedListsInfoTO getNamedListInfo(String listId) {
@@ -1390,14 +1406,11 @@ public class Connection {
         }
     }
 
-    public List<NotificationTO> getNotifications() {
-        try {
-            return requestBuilder.get(getAlexaServer() + "/api/notifications")
-                    .syncSend(NotificationListResponseTO.class).notifications;
-        } catch (ConnectionException e) {
-            logger.warn("Failed to get notifications: {}", e.getMessage());
-        }
-        return List.of();
+    public List<NotificationTO> getNotifications() throws ConnectionException {
+        // propagates the exception: an empty list is indistinguishable from "no notifications set"
+        return requestBuilder.get(getAlexaServer() + "/api/notifications")
+                .withHeader("User-Agent", NOTIFICATIONS_USER_AGENT)
+                .syncSend(NotificationListResponseTO.class).notifications;
     }
 
     public NotificationTO getNotification(String notificationId) throws ConnectionException {
